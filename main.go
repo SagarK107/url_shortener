@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -13,14 +14,15 @@ import (
 )
 
 var urls = make(map[string]string)
+var originalURLMap = make(map[string]string)
 
 type urlBody struct {
 	Url string
 }
 
 type shortenBody struct {
-	Short_url    string `json:"short_url"`
-	Original_url string `json:"original_url"`
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
 }
 
 func health(w http.ResponseWriter, req *http.Request) {
@@ -34,6 +36,7 @@ func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 
 		http.Error(w, "Method must be POST", http.StatusMethodNotAllowed)
+		return
 	}
 	req.Body = http.MaxBytesReader(w, req.Body, 1048576)
 
@@ -62,38 +65,70 @@ func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
 	}
 
 	existing_url, ok := urls[normalizedURL]
-
+	var shortURL string
+	var isShortURLExisting bool
 	if ok {
-		fmt.Printf("URL already exists for this url: %s", existing_url)
-		return
+		fmt.Printf("URL already exists for this url: %s\n", existing_url)
+		shortURL = existing_url
+		isShortURLExisting = true
+
+	} else {
+		isShortURLExisting = false
+		shortURL, err = generateShortURL(7)
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		urls[normalizedURL] = shortURL
+		originalURLMap[shortURL] = normalizedURL
+
+		fmt.Printf("Assigned url %s for original url %s\n", shortURL, urlBody.Url)
 	}
 
-	shortURL, err := generateShortURL(7)
-
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	urls[normalizedURL] = shortURL
-
-	fmt.Printf("Assigned url %s for original url %s", shortURL, urlBody.Url)
-
+	newURL := fmt.Sprintf("%s/%s", baseURL, shortURL)
 	response := shortenBody{
-		Short_url:    shortURL,
-		Original_url: normalizedURL,
-	}
-	err = json.NewEncoder(w).Encode(response)
-
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		ShortURL:    newURL,
+		OriginalURL: normalizedURL,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	if isShortURLExisting {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
+
+	err = json.NewEncoder(w).Encode(response)
+
+	if err != nil {
+		// Headers are already sent, so we can't change the response.
+		// Record it for ourselves instead.
+		slog.Error("writing shorten response", "err", err)
+	}
 
 }
 
+func redirectFromShortURL(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "Method not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	shortenedURL := req.PathValue("shortenedURL")
+
+	original_url, ok := originalURLMap[shortenedURL]
+
+	if !ok {
+		http.Error(w, "The requested URL does not exist", http.StatusNotFound)
+		return
+
+	}
+
+	http.Redirect(w, req, original_url, http.StatusTemporaryRedirect)
+
+}
 func generateShortURL(length int) (string, error) {
 	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	s := ""
@@ -144,10 +179,15 @@ func normalizeURL(urlString string) (string, error) {
 func main() {
 	http.HandleFunc("/health", health)
 	http.HandleFunc("/shorten", sendURLForShortening)
+	http.HandleFunc("/{shortenedURL}", redirectFromShortURL)
 
-	fmt.Println("Server listening on port 8080")
+	// "localhost:8080" means "port 8080 on every network interface". The public
+	// address (baseURL) is a separate setting used only to build links.
+	addr := "localhost:" + port
 
-	err := http.ListenAndServe("localhost:8080", nil)
+	fmt.Printf("Server listening on %s (public URL %s)\n", addr, baseURL)
+
+	err := http.ListenAndServe(addr, nil)
 
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal("Error in server:", err)
