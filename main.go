@@ -16,6 +16,8 @@ import (
 var urls = make(map[string]string)
 var originalURLMap = make(map[string]string)
 
+const maxURLLength = 2000 // length picked as 2000 for overly long urls
+
 type urlBody struct {
 	Url string
 }
@@ -44,24 +46,26 @@ func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
 
 	err := json.NewDecoder(req.Body).Decode(&urlBody)
 
-	fmt.Printf("decoded: %q\n", urlBody.Url)
-
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		slog.Error("Error Decoding JSON: Invlaid JSON", "err", err)
+		http.Error(w, "Error Decoding JSON: Invalid JSON sent.", http.StatusBadRequest)
 		return
 	}
 	normalizedURL, err := normalizeURL(urlBody.Url)
-	if !validateURL(normalizedURL) {
-
-		http.Error(w, "Invalid URL", http.StatusBadRequest)
-		return
-	}
 
 	if err != nil {
 
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 
+	}
+
+	err = validateURL(normalizedURL)
+
+	if err != nil {
+
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	existing_url, ok := urls[normalizedURL]
@@ -77,7 +81,8 @@ func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
 		shortURL, err = generateShortURL(7)
 
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			slog.Error("URL could not be shortened", "err", err)
+			http.Error(w, "URL could not be shortened", http.StatusInternalServerError)
 			return
 		}
 
@@ -136,7 +141,7 @@ func generateShortURL(length int) (string, error) {
 		n, err := rand.Int(rand.Reader, big.NewInt(62))
 
 		if err != nil {
-			return "", fmt.Errorf("Error in function generateShortUrl: %w ", err)
+			return "", fmt.Errorf("error in function generateShortUrl: %w ", err)
 		}
 
 		char := string(charset[n.Int64()])
@@ -148,21 +153,42 @@ func generateShortURL(length int) (string, error) {
 
 }
 
-func validateURL(urlString string) bool {
-	allowList := []string{"http", "https", ""}
+func validateURL(urlString string) error {
+
+	allowList := []string{"http", "https"}
 	u, err := url.Parse(urlString)
-	if u != nil {
-		fmt.Println("Scheme", u.Scheme)
+
+	if err != nil {
+		return errors.New("URL could not be parsed")
 	}
 
-	return err == nil && slices.Contains(allowList, u.Scheme) && u.Host != ""
+	if !slices.Contains(allowList, u.Scheme) {
+		return errors.New("scheme must be http or https")
+	}
+
+	if u.Host == "" {
+		return errors.New("missing host")
+	}
+
+	return nil
 
 }
 
 func normalizeURL(urlString string) (string, error) {
+
+	urlLength := len(urlString)
+
+	if urlLength == 0 {
+		return "", errors.New("no empty URLS")
+	}
+
+	if urlLength > maxURLLength {
+		return "", fmt.Errorf("URL exceeds maximum length: %d", maxURLLength)
+	}
+
 	u, err := url.Parse(urlString)
 	if err != nil {
-		return "", errors.New("Problem normalizing URL")
+		return "", errors.New("problem normalizing URL")
 	}
 
 	if u.Scheme == "" {
@@ -172,17 +198,11 @@ func normalizeURL(urlString string) (string, error) {
 	return urlString, nil
 }
 
-// func retrieveShortURL(shortened_url string) string {
-
-// }
-
 func main() {
 	http.HandleFunc("/health", health)
 	http.HandleFunc("/shorten", sendURLForShortening)
 	http.HandleFunc("/{shortenedURL}", redirectFromShortURL)
 
-	// "localhost:8080" means "port 8080 on every network interface". The public
-	// address (baseURL) is a separate setting used only to build links.
 	addr := "localhost:" + port
 
 	fmt.Printf("Server listening on %s (public URL %s)\n", addr, baseURL)
