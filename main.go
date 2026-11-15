@@ -112,11 +112,32 @@ func safeShorten(normalizedURL string, lock *sync.RWMutex, urls map[string]strin
 
 	} else {
 
-		shortURL, err := generateShortURL(7)
+		//Check for collision
+		var shortURL string
+		var err error
+		tries := 20
+		for tries > 0 {
 
-		if err != nil {
-			slog.Error("URL could not be shortened", "err", err)
-			return "", false, fmt.Errorf("URL could not be shortened")
+			shortURL, err = generateShortURL(7)
+
+			if err != nil {
+				slog.Error("URL could not be shortened", "err", err)
+				return "", false, fmt.Errorf("URL could not be shortened")
+			}
+
+			_, ok = originalURLMap[shortURL]
+
+			if !ok {
+				break
+			}
+
+			tries -= 1
+
+		}
+
+		if tries <= 0 {
+			slog.Error("Could not generate URL due to collisions")
+			return "", false, fmt.Errorf("Could not shorten URL due to collision error")
 		}
 
 		urls[normalizedURL] = shortURL
@@ -153,16 +174,18 @@ func redirectFromShortURL(w http.ResponseWriter, req *http.Request) {
 }
 func generateShortURL(length int) (string, error) {
 	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	numChars := len(charset)
 	var s strings.Builder
+	s.Grow(length)
 	for i := 0; i < length; i++ {
-		n, err := rand.Int(rand.Reader, big.NewInt(62))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(numChars)))
 
 		if err != nil {
 			return "", fmt.Errorf("error in function generateShortUrl: %w ", err)
 		}
 
-		char := string(charset[n.Int64()])
-		s.WriteString(char)
+		char := charset[n.Int64()]
+		s.WriteByte(char)
 
 	}
 
@@ -180,7 +203,7 @@ func validateURL(urlString string) error {
 	}
 
 	if !slices.Contains(allowList, u.Scheme) {
-		return errors.New("scheme must be http or https")
+		return ErrSchemeMustBeHTTPOrHTTPS
 	}
 
 	if u.Host == "" {
@@ -196,16 +219,16 @@ func normalizeURL(urlString string) (string, error) {
 	urlLength := len(urlString)
 
 	if urlLength == 0 {
-		return "", errors.New("no empty URLS")
+		return "", ErrNoEmptyURLs
 	}
 
 	if urlLength > maxURLLength {
-		return "", fmt.Errorf("URL exceeds maximum length: %d", maxURLLength)
+		return "", fmt.Errorf("%w: %d", ErrURLTooLong, maxURLLength)
 	}
 
 	u, err := url.Parse(urlString)
 	if err != nil {
-		return "", errors.New("problem normalizing URL")
+		return "", ErrProblemNormalizingURL
 	}
 
 	if u.Scheme == "" {
