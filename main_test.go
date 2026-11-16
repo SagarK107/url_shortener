@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,73 @@ func TestNormalizeURL(t *testing.T) {
 			}
 
 		})
+	}
+
+}
+
+func TestValidateURL(t *testing.T) {
+	var validateURlTests = []struct {
+		name    string
+		got     string
+		wantErr error
+	}{
+		{"https accepted", "https://go.dev", nil},
+		{"http accepted", "http://go.dev", nil},
+		{"ftp rejected", "ftp://go.dev", ErrSchemeMustBeHTTPOrHTTPS},
+		{"javascript rejected", "javascript:alert(1)", ErrSchemeMustBeHTTPOrHTTPS},
+		{"missing host", "https://", ErrMissingHost},
+		{"protocol-relative after normalize", "https:////evil.com", ErrMissingHost},
+	}
+
+	for _, test := range validateURlTests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateURL(test.got)
+
+			if !errors.Is(err, test.wantErr) {
+				t.Errorf("Expected %v", test.wantErr)
+			}
+		})
+	}
+
+}
+
+func TestGenerateShortURL(t *testing.T) {
+	lengths := []int{1, 7, 12, 20}
+
+	for _, val := range lengths {
+		testName := fmt.Sprintf("Test for length %d", val)
+		stringsMap := make(map[string]bool)
+
+		t.Run(testName, func(t *testing.T) {
+
+			for range 100 {
+
+				got, err := generateShortURL(val)
+
+				if err != nil {
+					t.Fatalf("Got error %s", err)
+				}
+
+				if len(got) != val {
+					t.Errorf("Expected length %d, got %d", val, len(got))
+				}
+
+				for _, ch := range got {
+					if !strings.ContainsRune(charset, ch) {
+						t.Errorf("code %q contains %q which is not in the charset", got, ch)
+					}
+				}
+
+				stringsMap[got] = true
+
+			}
+
+			if len(stringsMap) < 5 {
+				t.Errorf("Generator stuck on small number of calls")
+			}
+
+		})
+
 	}
 
 }

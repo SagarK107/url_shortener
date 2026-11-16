@@ -21,6 +21,8 @@ var originalURLMap = make(map[string]string)
 
 const maxURLLength = 2000 // length picked as 2000 for overly long urls
 
+const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
 type urlBody struct {
 	Url string
 }
@@ -173,7 +175,7 @@ func redirectFromShortURL(w http.ResponseWriter, req *http.Request) {
 
 }
 func generateShortURL(length int) (string, error) {
-	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
 	numChars := len(charset)
 	var s strings.Builder
 	s.Grow(length)
@@ -199,7 +201,7 @@ func validateURL(urlString string) error {
 	u, err := url.Parse(urlString)
 
 	if err != nil {
-		return errors.New("URL could not be parsed")
+		return ErrURLCouldNotBeParsed
 	}
 
 	if !slices.Contains(allowList, u.Scheme) {
@@ -207,7 +209,7 @@ func validateURL(urlString string) error {
 	}
 
 	if u.Host == "" {
-		return errors.New("missing host")
+		return ErrMissingHost
 	}
 
 	return nil
