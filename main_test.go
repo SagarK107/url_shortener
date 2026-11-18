@@ -17,7 +17,7 @@ func urlOfLength(prefix string, n int) string {
 func TestNormalizeURL(t *testing.T) {
 	var normalizeTests = []struct {
 		name    string
-		got     string
+		input   string
 		want    string
 		wantErr error
 	}{
@@ -25,6 +25,8 @@ func TestNormalizeURL(t *testing.T) {
 		{"https unchanged", "https://go.dev", "https://go.dev", nil},
 		{"http not upgraded", "http://go.dev", "http://go.dev", nil},
 		{"empty urls rejected", "", "", ErrNoEmptyURLs},
+		{"normalizing error", "%zzzz", "", ErrProblemNormalizingURL},
+		{"ftp check", "ftp://go.dev", "ftp://go.dev", nil},
 
 		// Length limit: test exactly at, just over, and far over the limit.
 		{"url exactly at max length accepted",
@@ -40,17 +42,20 @@ func TestNormalizeURL(t *testing.T) {
 	}
 	for _, test := range normalizeTests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := normalizeURL(test.got)
+			got, err := normalizeURL(test.input)
 			want := test.want
 
 			if err != nil && !errors.Is(err, test.wantErr) {
-				t.Fatalf("Normalization failed for string:%s, Error:%s", got, err.Error())
+				t.Fatalf("Normalization failed for string:%q, Error:%s", test.input, err.Error())
 			}
 
 			if err == nil && test.wantErr != nil {
-				t.Errorf("Expected error %s", test.wantErr)
+				t.Fatalf("Expected error %s", test.wantErr)
 			}
 
+			if err != nil && errors.Is(err, test.wantErr) {
+				return
+			}
 			if got != want {
 				t.Errorf("Got %s Expected %s", got, want)
 			}
@@ -63,7 +68,7 @@ func TestNormalizeURL(t *testing.T) {
 func TestValidateURL(t *testing.T) {
 	var validateURlTests = []struct {
 		name    string
-		got     string
+		input   string
 		wantErr error
 	}{
 		{"https accepted", "https://go.dev", nil},
@@ -76,10 +81,10 @@ func TestValidateURL(t *testing.T) {
 
 	for _, test := range validateURlTests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateURL(test.got)
+			err := validateURL(test.input)
 
 			if !errors.Is(err, test.wantErr) {
-				t.Errorf("Expected %v", test.wantErr)
+				t.Errorf("Expected %v, Got :%v", test.wantErr, err)
 			}
 		})
 	}
@@ -87,6 +92,7 @@ func TestValidateURL(t *testing.T) {
 }
 
 func TestGenerateShortURL(t *testing.T) {
+
 	lengths := []int{1, 7, 12, 20}
 
 	for _, val := range lengths {
