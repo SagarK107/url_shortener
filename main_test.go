@@ -156,20 +156,41 @@ func TestHealth(t *testing.T) {
 
 }
 
+// TestShorten checks valid URLs end to end through the handler: each one is
+// created (201), gets a short URL on our domain, and comes back normalized.
+// That proves the handler really uses normalizeURL, not just that
+// normalizeURL works on its own.
 func TestShorten(t *testing.T) {
-	payload := []byte(`{"Url": "www.evil.com"}`)
-	req := httptest.NewRequest("POST", "/shorten", bytes.NewBuffer(payload))
-	w := httptest.NewRecorder()
-	sendURLForShortening(w, req)
-	res := w.Result()
-	defer res.Body.Close()
-
-	var got shortenBody
-
-	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
-		t.Errorf("Expected no error, got %v", err)
+	tests := []struct {
+		name         string
+		input        string
+		wantOriginal string
+	}{
+		{"bare domain gets https", "go.dev", "https://go.dev"},
+		{"https kept", "https://go.dev", "https://go.dev"},
+		{"http not upgraded", "http://go.dev", "http://go.dev"},
+		{"path and query kept", "https://go.dev/doc?x=1", "https://go.dev/doc?x=1"},
 	}
 
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Reset per row: "go.dev" and "https://go.dev" normalize to the
+			// same URL, so without this the second row would get 200, not 201.
+			resetStore(t)
+
+			status, got := postShorten(t, test.input)
+
+			if status != http.StatusCreated {
+				t.Errorf("POST %q: got status %d, want %d", test.input, status, http.StatusCreated)
+			}
+			if !strings.HasPrefix(got.ShortURL, baseURL+"/") {
+				t.Errorf("POST %q: short_url %q does not start with %q", test.input, got.ShortURL, baseURL+"/")
+			}
+			if got.OriginalURL != test.wantOriginal {
+				t.Errorf("POST %q: original_url %q, want %q", test.input, got.OriginalURL, test.wantOriginal)
+			}
+		})
+	}
 }
 
 // resetStore replaces the global maps with empty ones, so URLs stored by
