@@ -76,7 +76,8 @@ func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
 	newURL, isShortURLExisting, err := safeShorten(normalizedURL, &lock, urls, originalURLMap)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("safeShorten error", "err", err.Error())
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
