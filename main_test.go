@@ -144,7 +144,8 @@ func TestGenerateShortURL(t *testing.T) {
 func TestHealth(t *testing.T) {
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
-	health(w, req)
+	srv := NewServer(NewMemoryStore())
+	srv.newMux().ServeHTTP(w, req)
 	res := w.Result()
 	defer res.Body.Close()
 	data, err := io.ReadAll(res.Body)
@@ -287,7 +288,8 @@ func TestShortenRejectsBadInput(t *testing.T) {
 		body       string
 		wantStatus int
 	}{
-		{"wrong method", http.MethodGet, "", http.StatusMethodNotAllowed},
+		{"wrong method", http.MethodPut, "", http.StatusMethodNotAllowed},
+		{"get on shorten", http.MethodGet, "", http.StatusNotFound},
 		{"not json", http.MethodPost, "not json", http.StatusBadRequest},
 		{"empty body", http.MethodPost, "", http.StatusBadRequest},
 		{"empty url", http.MethodPost, bodyFor(""), http.StatusBadRequest},
@@ -306,7 +308,7 @@ func TestShortenRejectsBadInput(t *testing.T) {
 
 			req := httptest.NewRequest(test.method, "/shorten", strings.NewReader(test.body))
 			w := httptest.NewRecorder()
-			srv.shorten(w, req)
+			srv.newMux().ServeHTTP(w, req)
 
 			if w.Code != test.wantStatus {
 				t.Errorf("got status %d, want %d, body %q", w.Code, test.wantStatus, w.Body.String())

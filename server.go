@@ -18,11 +18,7 @@ func NewServer(store *MemoryStore) *Server {
 }
 
 func (srv *Server) shorten(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
 
-		http.Error(w, "Method must be POST", http.StatusMethodNotAllowed)
-		return
-	}
 	req.Body = http.MaxBytesReader(w, req.Body, 1048576)
 
 	var urlBody urlBody
@@ -82,10 +78,6 @@ func (srv *Server) shorten(w http.ResponseWriter, req *http.Request) {
 }
 
 func (srv *Server) redirect(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "Method not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	shortenedURL := req.PathValue("shortenedURL")
 
@@ -102,8 +94,8 @@ func (srv *Server) redirect(w http.ResponseWriter, req *http.Request) {
 
 func (srv *Server) newMux() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", health)
-	mux.HandleFunc("/shorten", srv.shorten)
-	mux.HandleFunc("/{shortenedURL}", srv.redirect)
+	mux.HandleFunc("GET /health", health)
+	mux.HandleFunc("POST /shorten", srv.shorten)
+	mux.HandleFunc("GET /{shortenedURL}", srv.redirect)
 	return mux
 }
