@@ -12,12 +12,9 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"sync"
 )
 
-var lock sync.RWMutex //Lock for the mapping urls
-var urls = make(map[string]string)
-var originalURLMap = make(map[string]string)
+var store = NewMemoryStore()
 
 const maxURLLength = 2000 // length picked as 2000 for overly long urls
 
@@ -73,16 +70,17 @@ func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	newURL, isShortURLExisting, err := safeShorten(normalizedURL, &lock, urls, originalURLMap)
+	code, isShortURLExisting, err := store.GetOrCreate(normalizedURL)
 
 	if err != nil {
-		slog.Error("safeShorten error", "err", err.Error())
+		slog.Error("getOrCreate error", "err", err.Error())
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
+	shortURL := fmt.Sprintf("%s/%s", baseURL, code)
 	response := shortenBody{
-		ShortURL:    newURL,
+		ShortURL:    shortURL,
 		OriginalURL: normalizedURL,
 	}
 
@@ -103,57 +101,6 @@ func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
 
 }
 
-func safeShorten(normalizedURL string, lock *sync.RWMutex, urls map[string]string, originalURLMap map[string]string) (string, bool, error) {
-	lock.Lock()
-	defer lock.Unlock()
-	existing_url, ok := urls[normalizedURL]
-
-	if ok {
-		slog.Info("URL already exists for this url", "existing_url", existing_url)
-		existingURL := fmt.Sprintf("%s/%s", baseURL, existing_url)
-		return existingURL, true, nil
-
-	} else {
-
-		//Check for collision
-		var shortURL string
-		var err error
-		tries := 20
-		for tries > 0 {
-
-			shortURL, err = generateShortURL(7)
-
-			if err != nil {
-				slog.Error("URL could not be shortened", "err", err)
-				return "", false, fmt.Errorf("URL could not be shortened")
-			}
-
-			_, ok = originalURLMap[shortURL]
-
-			if !ok {
-				break
-			}
-
-			tries -= 1
-
-		}
-
-		if tries <= 0 {
-			slog.Error("Could not generate URL due to collisions")
-			return "", false, fmt.Errorf("Could not shorten URL due to collision error")
-		}
-
-		urls[normalizedURL] = shortURL
-		originalURLMap[shortURL] = normalizedURL
-
-		newURL := fmt.Sprintf("%s/%s", baseURL, shortURL)
-
-		return newURL, false, nil
-
-	}
-
-}
-
 func redirectFromShortURL(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "Method not Allowed", http.StatusMethodNotAllowed)
@@ -162,9 +109,7 @@ func redirectFromShortURL(w http.ResponseWriter, req *http.Request) {
 
 	shortenedURL := req.PathValue("shortenedURL")
 
-	lock.RLock()
-	original_url, ok := originalURLMap[shortenedURL]
-	lock.RUnlock()
+	original_url, ok := store.Lookup(shortenedURL)
 
 	if !ok {
 		http.Error(w, "The requested URL does not exist", http.StatusNotFound)

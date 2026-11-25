@@ -204,15 +204,11 @@ func TestShorten(t *testing.T) {
 	}
 }
 
-// resetStore replaces the global maps with empty ones, so URLs stored by
+// resetStore replaces the global store with an empty one, so URLs stored by
 // one test can't change the outcome of another. Every handler test that
 // touches the maps calls this first.
 func resetStore(t *testing.T) {
-	t.Helper()
-	lock.Lock()
-	defer lock.Unlock()
-	urls = make(map[string]string)
-	originalURLMap = make(map[string]string)
+	store = NewMemoryStore()
 }
 
 // postShorten sends {"Url": rawURL} to the shorten handler and returns the
@@ -319,8 +315,8 @@ func TestShortenRejectsBadInput(t *testing.T) {
 			if w.Code != test.wantStatus {
 				t.Errorf("got status %d, want %d, body %q", w.Code, test.wantStatus, w.Body.String())
 			}
-			if len(urls) != 0 || len(originalURLMap) != 0 {
-				t.Errorf("rejected request was stored: urls=%v codes=%v", urls, originalURLMap)
+			if len(store.urlToCode) != 0 || len(store.codeToURL) != 0 {
+				t.Errorf("rejected request was stored: urls=%v codes=%v", store.urlToCode, store.codeToURL)
 			}
 		})
 	}
@@ -447,8 +443,8 @@ func TestConcurrentSameURL(t *testing.T) {
 			t.Fatalf("same URL got different codes: %q and %q", bodies[0].ShortURL, body.ShortURL)
 		}
 	}
-	if len(urls) != 1 || len(originalURLMap) != 1 {
-		t.Errorf("stored %d URLs and %d codes, want 1 of each", len(urls), len(originalURLMap))
+	if len(store.urlToCode) != 1 || len(store.codeToURL) != 1 {
+		t.Errorf("stored %d URLs and %d codes, want 1 of each", len(store.urlToCode), len(store.codeToURL))
 	}
 }
 
