@@ -220,7 +220,7 @@ func postShorten(t *testing.T, rawURL string, srv *Server) (int, shortenBody) {
 
 	req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewReader(payload))
 	w := httptest.NewRecorder()
-	srv.shorten(w, req)
+	srv.newMux().ServeHTTP(w, req)
 
 	// Check the status before touching the body.
 	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
@@ -323,9 +323,8 @@ func TestShortenRejectsBadInput(t *testing.T) {
 func getRedirect(method, code string, srv *Server) *httptest.ResponseRecorder {
 
 	req := httptest.NewRequest(method, "/"+code, nil)
-	req.SetPathValue("shortenedURL", code)
 	w := httptest.NewRecorder()
-	srv.redirect(w, req)
+	srv.newMux().ServeHTTP(w, req)
 	return w
 }
 
@@ -403,7 +402,7 @@ func postConcurrently(t *testing.T, inputs []string, srv *Server) ([]int, []shor
 			<-start
 			req := httptest.NewRequest(http.MethodPost, "/shorten", strings.NewReader(bodyFor(input)))
 			w := httptest.NewRecorder()
-			srv.shorten(w, req)
+			srv.newMux().ServeHTTP(w, req)
 
 			// Each goroutine writes only its own index, so no lock is needed.
 			statuses[i] = w.Code

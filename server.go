@@ -99,3 +99,11 @@ func (srv *Server) redirect(w http.ResponseWriter, req *http.Request) {
 
 	http.Redirect(w, req, originalURL, http.StatusTemporaryRedirect)
 }
+
+func (srv *Server) newMux() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/shorten", srv.shorten)
+	mux.HandleFunc("/{shortenedURL}", srv.redirect)
+	return mux
+}

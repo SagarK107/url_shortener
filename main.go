@@ -31,15 +31,12 @@ func main() {
 
 	store := NewMemoryStore()
 	srv := NewServer(store)
-	http.HandleFunc("/health", health)
-	http.HandleFunc("/shorten", srv.shorten)
-	http.HandleFunc("/{shortenedURL}", srv.redirect)
 
 	addr := "localhost:" + port
 
 	fmt.Printf("Server listening on %s (public URL %s)\n", addr, baseURL)
 
-	err := http.ListenAndServe(addr, nil)
+	err := http.ListenAndServe(addr, srv.newMux())
 
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal("Error in server:", err)
