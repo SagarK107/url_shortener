@@ -185,11 +185,12 @@ func TestShorten(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Reset per row: "go.dev" and "https://go.dev" normalize to the
+			// New server: "go.dev" and "https://go.dev" normalize to the
 			// same URL, so without this the second row would get 200, not 201.
-			resetStore(t)
+			store := NewMemoryStore()
+			srv := NewServer(store)
 
-			status, got := postShorten(t, test.input)
+			status, got := postShorten(t, test.input, srv)
 
 			if status != http.StatusCreated {
 				t.Errorf("POST %q: got status %d, want %d", test.input, status, http.StatusCreated)
@@ -204,17 +205,10 @@ func TestShorten(t *testing.T) {
 	}
 }
 
-// resetStore replaces the global store with an empty one, so URLs stored by
-// one test can't change the outcome of another. Every handler test that
-// touches the maps calls this first.
-func resetStore(t *testing.T) {
-	store = NewMemoryStore()
-}
-
 // postShorten sends {"Url": rawURL} to the shorten handler and returns the
 // status code and decoded response. It stops the test on a non-success
 // status, because the body would then be a plain-text error, not JSON.
-func postShorten(t *testing.T, rawURL string) (int, shortenBody) {
+func postShorten(t *testing.T, rawURL string, srv *Server) (int, shortenBody) {
 	t.Helper()
 
 	// json.Marshal builds the body from the real struct, so quoting and
@@ -226,7 +220,7 @@ func postShorten(t *testing.T, rawURL string) (int, shortenBody) {
 
 	req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewReader(payload))
 	w := httptest.NewRecorder()
-	sendURLForShortening(w, req)
+	srv.shorten(w, req)
 
 	// Check the status before touching the body.
 	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
@@ -243,10 +237,10 @@ func postShorten(t *testing.T, rawURL string) (int, shortenBody) {
 // Shortening the same URL twice must reuse the first code: 201 the first
 // time (created), 200 the second (already existed), same short_url both times.
 func TestShortenSameURLTwice(t *testing.T) {
-	resetStore(t)
-
-	firstStatus, first := postShorten(t, "go.dev")
-	secondStatus, second := postShorten(t, "go.dev")
+	store := NewMemoryStore()
+	srv := NewServer(store)
+	firstStatus, first := postShorten(t, "go.dev", srv)
+	secondStatus, second := postShorten(t, "go.dev", srv)
 
 	if firstStatus != http.StatusCreated {
 		t.Errorf("first POST: got status %d, want %d", firstStatus, http.StatusCreated)
@@ -262,10 +256,11 @@ func TestShortenSameURLTwice(t *testing.T) {
 // Different URLs must each get their own code. If they shared one,
 // the redirect would send one of them to the wrong site.
 func TestShortenDifferentURLs(t *testing.T) {
-	resetStore(t)
+	store := NewMemoryStore()
+	srv := NewServer(store)
 
-	statusA, a := postShorten(t, "go.dev")
-	statusB, b := postShorten(t, "example.com")
+	statusA, a := postShorten(t, "go.dev", srv)
+	statusB, b := postShorten(t, "example.com", srv)
 
 	if statusA != http.StatusCreated || statusB != http.StatusCreated {
 		t.Errorf("got statuses %d and %d, want %d for both", statusA, statusB, http.StatusCreated)
@@ -306,11 +301,12 @@ func TestShortenRejectsBadInput(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			resetStore(t)
+			store := NewMemoryStore()
+			srv := NewServer(store)
 
 			req := httptest.NewRequest(test.method, "/shorten", strings.NewReader(test.body))
 			w := httptest.NewRecorder()
-			sendURLForShortening(w, req)
+			srv.shorten(w, req)
 
 			if w.Code != test.wantStatus {
 				t.Errorf("got status %d, want %d, body %q", w.Code, test.wantStatus, w.Body.String())
@@ -324,11 +320,12 @@ func TestShortenRejectsBadInput(t *testing.T) {
 
 // getRedirect calls the redirect handler directly. A direct call skips the
 // router, so the path value the router would normally fill in is set here.
-func getRedirect(method, code string) *httptest.ResponseRecorder {
+func getRedirect(method, code string, srv *Server) *httptest.ResponseRecorder {
+
 	req := httptest.NewRequest(method, "/"+code, nil)
 	req.SetPathValue("shortenedURL", code)
 	w := httptest.NewRecorder()
-	redirectFromShortURL(w, req)
+	srv.redirect(w, req)
 	return w
 }
 
@@ -343,8 +340,9 @@ func codeFrom(t *testing.T, shortURL string) string {
 }
 
 func TestRedirect(t *testing.T) {
-	resetStore(t)
-	_, created := postShorten(t, "https://go.dev/doc")
+	store := NewMemoryStore()
+	srv := NewServer(store)
+	_, created := postShorten(t, "https://go.dev/doc", srv)
 	knownCode := codeFrom(t, created.ShortURL)
 
 	tests := []struct {
@@ -361,7 +359,7 @@ func TestRedirect(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			w := getRedirect(test.method, test.code)
+			w := getRedirect(test.method, test.code, srv)
 
 			if w.Code != test.wantStatus {
 				t.Errorf("%s /%s: got status %d, want %d", test.method, test.code, w.Code, test.wantStatus)
@@ -375,10 +373,11 @@ func TestRedirect(t *testing.T) {
 
 // The whole product in one test: shorten a URL, then follow its code.
 func TestShortenThenRedirect(t *testing.T) {
-	resetStore(t)
+	store := NewMemoryStore()
+	srv := NewServer(store)
 
-	_, created := postShorten(t, "go.dev/learn")
-	w := getRedirect(http.MethodGet, codeFrom(t, created.ShortURL))
+	_, created := postShorten(t, "go.dev/learn", srv)
+	w := getRedirect(http.MethodGet, codeFrom(t, created.ShortURL), srv)
 
 	if w.Code != http.StatusTemporaryRedirect {
 		t.Fatalf("got status %d, want %d", w.Code, http.StatusTemporaryRedirect)
@@ -391,7 +390,7 @@ func TestShortenThenRedirect(t *testing.T) {
 // postConcurrently sends one request per input, all released at once.
 // It uses t.Errorf rather than postShorten because t.Fatalf must only be
 // called from the test's own goroutine.
-func postConcurrently(t *testing.T, inputs []string) ([]int, []shortenBody) {
+func postConcurrently(t *testing.T, inputs []string, srv *Server) ([]int, []shortenBody) {
 	t.Helper()
 
 	statuses := make([]int, len(inputs))
@@ -404,7 +403,7 @@ func postConcurrently(t *testing.T, inputs []string) ([]int, []shortenBody) {
 			<-start
 			req := httptest.NewRequest(http.MethodPost, "/shorten", strings.NewReader(bodyFor(input)))
 			w := httptest.NewRecorder()
-			sendURLForShortening(w, req)
+			srv.shorten(w, req)
 
 			// Each goroutine writes only its own index, so no lock is needed.
 			statuses[i] = w.Code
@@ -421,13 +420,14 @@ func postConcurrently(t *testing.T, inputs []string) ([]int, []shortenBody) {
 // 50 simultaneous requests for one URL must create exactly one code.
 // This is the check-then-act race the single write lock prevents.
 func TestConcurrentSameURL(t *testing.T) {
-	resetStore(t)
+	store := NewMemoryStore()
+	srv := NewServer(store)
 
 	inputs := make([]string, 50)
 	for i := range inputs {
 		inputs[i] = "https://go.dev/same"
 	}
-	statuses, bodies := postConcurrently(t, inputs)
+	statuses, bodies := postConcurrently(t, inputs, srv)
 
 	created := 0
 	for _, status := range statuses {
@@ -443,20 +443,21 @@ func TestConcurrentSameURL(t *testing.T) {
 			t.Fatalf("same URL got different codes: %q and %q", bodies[0].ShortURL, body.ShortURL)
 		}
 	}
-	if len(store.urlToCode) != 1 || len(store.codeToURL) != 1 {
-		t.Errorf("stored %d URLs and %d codes, want 1 of each", len(store.urlToCode), len(store.codeToURL))
+	if len(srv.store.urlToCode) != 1 || len(srv.store.codeToURL) != 1 {
+		t.Errorf("stored %d URLs and %d codes, want 1 of each", len(srv.store.urlToCode), len(srv.store.codeToURL))
 	}
 }
 
 // 50 simultaneous requests for different URLs must each get a working code.
 func TestConcurrentDifferentURLs(t *testing.T) {
-	resetStore(t)
+	store := NewMemoryStore()
+	srv := NewServer(store)
 
 	inputs := make([]string, 50)
 	for i := range inputs {
 		inputs[i] = fmt.Sprintf("https://go.dev/page/%d", i)
 	}
-	statuses, bodies := postConcurrently(t, inputs)
+	statuses, bodies := postConcurrently(t, inputs, srv)
 
 	seen := make(map[string]bool)
 	for i, body := range bodies {
@@ -469,7 +470,7 @@ func TestConcurrentDifferentURLs(t *testing.T) {
 		}
 		seen[body.ShortURL] = true
 
-		w := getRedirect(http.MethodGet, codeFrom(t, body.ShortURL))
+		w := getRedirect(http.MethodGet, codeFrom(t, body.ShortURL), srv)
 		if got := w.Header().Get("Location"); got != inputs[i] {
 			t.Errorf("code for %q redirects to %q", inputs[i], got)
 		}

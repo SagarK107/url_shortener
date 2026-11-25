@@ -1,20 +1,12 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"log/slog"
-	"math/big"
-	"net/http"
-	"net/url"
-	"slices"
-	"strings"
-)
 
-var store = NewMemoryStore()
+	"net/http"
+)
 
 const maxURLLength = 2000 // length picked as 2000 for overly long urls
 
@@ -35,161 +27,13 @@ func health(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(`{"status" : "UP"}`))
 }
 
-func sendURLForShortening(w http.ResponseWriter, req *http.Request) {
-
-	if req.Method != http.MethodPost {
-
-		http.Error(w, "Method must be POST", http.StatusMethodNotAllowed)
-		return
-	}
-	req.Body = http.MaxBytesReader(w, req.Body, 1048576)
-
-	var urlBody urlBody
-
-	err := json.NewDecoder(req.Body).Decode(&urlBody)
-
-	if err != nil {
-		slog.Error("Error Decoding JSON: Invlaid JSON", "err", err)
-		http.Error(w, "Error Decoding JSON: Invalid JSON sent.", http.StatusBadRequest)
-		return
-	}
-	normalizedURL, err := normalizeURL(urlBody.Url)
-
-	if err != nil {
-
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-
-	}
-
-	err = validateURL(normalizedURL)
-
-	if err != nil {
-
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	code, isShortURLExisting, err := store.GetOrCreate(normalizedURL)
-
-	if err != nil {
-		slog.Error("getOrCreate error", "err", err.Error())
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	shortURL := fmt.Sprintf("%s/%s", baseURL, code)
-	response := shortenBody{
-		ShortURL:    shortURL,
-		OriginalURL: normalizedURL,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if isShortURLExisting {
-		w.WriteHeader(http.StatusOK)
-	} else {
-		w.WriteHeader(http.StatusCreated)
-	}
-
-	err = json.NewEncoder(w).Encode(response)
-
-	if err != nil {
-		// Headers are already sent, so we can't change the response.
-		// Record it for ourselves instead.
-		slog.Error("writing shorten response", "err", err)
-	}
-
-}
-
-func redirectFromShortURL(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "Method not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	shortenedURL := req.PathValue("shortenedURL")
-
-	original_url, ok := store.Lookup(shortenedURL)
-
-	if !ok {
-		http.Error(w, "The requested URL does not exist", http.StatusNotFound)
-		return
-
-	}
-
-	http.Redirect(w, req, original_url, http.StatusTemporaryRedirect)
-
-}
-func generateShortURL(length int) (string, error) {
-
-	numChars := len(charset)
-	var s strings.Builder
-	s.Grow(length)
-	for i := 0; i < length; i++ {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(numChars)))
-
-		if err != nil {
-			return "", fmt.Errorf("error in function generateShortUrl: %w ", err)
-		}
-
-		char := charset[n.Int64()]
-		s.WriteByte(char)
-
-	}
-
-	return s.String(), nil
-
-}
-
-func validateURL(urlString string) error {
-
-	allowList := []string{"http", "https"}
-	u, err := url.Parse(urlString)
-
-	if err != nil {
-		return ErrURLCouldNotBeParsed
-	}
-
-	if !slices.Contains(allowList, u.Scheme) {
-		return ErrSchemeMustBeHTTPOrHTTPS
-	}
-
-	if u.Host == "" {
-		return ErrMissingHost
-	}
-
-	return nil
-
-}
-
-func normalizeURL(urlString string) (string, error) {
-
-	urlLength := len(urlString)
-
-	if urlLength == 0 {
-		return "", ErrNoEmptyURLs
-	}
-
-	if urlLength > maxURLLength {
-		return "", fmt.Errorf("%w: %d", ErrURLTooLong, maxURLLength)
-	}
-
-	u, err := url.Parse(urlString)
-	if err != nil {
-		return "", ErrProblemNormalizingURL
-	}
-
-	if u.Scheme == "" {
-		return "https://" + urlString, nil
-	}
-
-	return urlString, nil
-}
-
 func main() {
+
+	store := NewMemoryStore()
+	srv := NewServer(store)
 	http.HandleFunc("/health", health)
-	http.HandleFunc("/shorten", sendURLForShortening)
-	http.HandleFunc("/{shortenedURL}", redirectFromShortURL)
+	http.HandleFunc("/shorten", srv.shorten)
+	http.HandleFunc("/{shortenedURL}", srv.redirect)
 
 	addr := "localhost:" + port
 
