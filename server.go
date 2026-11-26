@@ -8,12 +8,14 @@ import (
 )
 
 type Server struct {
-	store *MemoryStore
+	store   *MemoryStore
+	baseURL string
 }
 
-func NewServer(store *MemoryStore) *Server {
+func NewServer(store *MemoryStore, baseURL string) *Server {
 	return &Server{
-		store: store,
+		store:   store,
+		baseURL: baseURL,
 	}
 }
 
@@ -55,7 +57,7 @@ func (srv *Server) shorten(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	shortURL := fmt.Sprintf("%s/%s", baseURL, code)
+	shortURL := fmt.Sprintf("%s/%s", srv.baseURL, code)
 	response := shortenBody{
 		ShortURL:    shortURL,
 		OriginalURL: normalizedURL,

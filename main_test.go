@@ -183,6 +183,7 @@ func TestShorten(t *testing.T) {
 		{"http not upgraded", "http://go.dev", "http://go.dev"},
 		{"path and query kept", "https://go.dev/doc?x=1", "https://go.dev/doc?x=1"},
 	}
+	config := NewConfig()
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -196,8 +197,8 @@ func TestShorten(t *testing.T) {
 			if status != http.StatusCreated {
 				t.Errorf("POST %q: got status %d, want %d", test.input, status, http.StatusCreated)
 			}
-			if !strings.HasPrefix(got.ShortURL, baseURL+"/") {
-				t.Errorf("POST %q: short_url %q does not start with %q", test.input, got.ShortURL, baseURL+"/")
+			if !strings.HasPrefix(got.ShortURL, config.BaseURL+"/") {
+				t.Errorf("POST %q: short_url %q does not start with %q", test.input, got.ShortURL, config.BaseURL+"/")
 			}
 			if got.OriginalURL != test.wantOriginal {
 				t.Errorf("POST %q: original_url %q, want %q", test.input, got.OriginalURL, test.wantOriginal)
@@ -333,9 +334,10 @@ func getRedirect(method, code string, srv *Server) *httptest.ResponseRecorder {
 // codeFrom removes the base URL from a short URL, leaving only the code.
 func codeFrom(t *testing.T, shortURL string) string {
 	t.Helper()
-	code, ok := strings.CutPrefix(shortURL, baseURL+"/")
+	config := NewConfig()
+	code, ok := strings.CutPrefix(shortURL, config.BaseURL+"/")
 	if !ok || code == "" {
-		t.Fatalf("short URL %q has no code after %q", shortURL, baseURL+"/")
+		t.Fatalf("short URL %q has no code after %q", shortURL, config.BaseURL+"/")
 	}
 	return code
 }
