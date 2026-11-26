@@ -477,3 +477,35 @@ func TestConcurrentDifferentURLs(t *testing.T) {
 		}
 	}
 }
+
+func TestHandlerServer(t *testing.T) {
+	store := NewMemoryStore()
+
+	store.generateCode = func(int) (string, error) {
+		return "aaaaaaa", nil
+	}
+
+	srv := NewServer(store)
+
+	status, _ := postShorten(t, "www.google.com", srv)
+
+	if status != http.StatusCreated {
+		t.Errorf("Expected status 201 got %d", status)
+	}
+
+	payload, _ := json.Marshal(urlBody{Url: "www.gfg.com"})
+	req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewReader(payload))
+	w := httptest.NewRecorder()
+	srv.newMux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500 got %d", w.Code)
+	}
+
+	// The real reason is logged on the server. The client must only get a
+	// generic message, never the internal error text.
+	if strings.Contains(w.Body.String(), ErrNoFreeCode.Error()) {
+		t.Errorf("500 response leaked the internal error: %q", w.Body.String())
+	}
+
+}

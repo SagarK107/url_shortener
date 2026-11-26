@@ -6,16 +6,21 @@ import (
 	"sync"
 )
 
+const codeLength = 7
+const maxCodeAttempts = 20
+
 type MemoryStore struct {
-	lock      sync.RWMutex
-	codeToURL map[string]string
-	urlToCode map[string]string
+	lock         sync.RWMutex
+	codeToURL    map[string]string
+	urlToCode    map[string]string
+	generateCode func(int) (string, error)
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		codeToURL: make(map[string]string),
-		urlToCode: make(map[string]string),
+		codeToURL:    make(map[string]string),
+		urlToCode:    make(map[string]string),
+		generateCode: generateShortURL,
 	}
 }
 
@@ -31,35 +36,26 @@ func (s *MemoryStore) GetOrCreate(url string) (code string, existed bool, err er
 	} else {
 		//Check for collision
 
-		tries := 20
-		for tries > 0 {
+		for range maxCodeAttempts {
 
-			code, err = generateShortURL(7)
+			code, err = s.generateCode(codeLength)
 
 			if err != nil {
 				slog.Error("URL could not be shortened", "err", err)
 				return "", false, fmt.Errorf("URL could not be shortened")
 			}
 
-			_, ok = s.codeToURL[code]
-
-			if !ok {
-				break
+			// Free code: save it and return straight from inside the loop.
+			if _, taken := s.codeToURL[code]; !taken {
+				s.urlToCode[url] = code
+				s.codeToURL[code] = url
+				return code, false, nil
 			}
-
-			tries -= 1
-
 		}
 
-		if tries <= 0 {
-			slog.Error("Could not generate URL due to collisions")
-			return "", false, fmt.Errorf("Could not shorten URL due to collision error")
-		}
-
-		s.urlToCode[url] = code
-		s.codeToURL[code] = url
-
-		return code, false, nil
+		// Reaching here means every attempt collided.
+		slog.Error("Could not generate URL due to collisions")
+		return "", false, ErrNoFreeCode
 	}
 }
 
