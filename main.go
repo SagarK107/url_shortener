@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 )
 
 const maxURLLength = 2000 // length picked as 2000 for overly long urls
@@ -29,23 +28,21 @@ func health(w http.ResponseWriter, req *http.Request) {
 
 func main() {
 
-	config := NewConfig()
-	i, err := strconv.Atoi(config.Port)
-
-	if err != nil {
-		log.Fatal("error in atoi")
-		return
+	// A local .env file is optional; real environment variables always win.
+	if err := loadDotEnv(); err != nil {
+		log.Fatalf("reading .env file: %v", err)
 	}
 
-	if i >= 1 && i >= 65535 {
-		log.Fatalf("port must be between 1 and 65535, got %d", i)
-		return
+	// Fail fast: refuse to start with bad settings rather than serve broken links.
+	config, err := loadConfig()
+	if err != nil {
+		log.Fatalf("invalid configuration: %v", err)
 	}
 
 	store := NewMemoryStore()
 	srv := NewServer(store, config.BaseURL)
 
-	addr := "localhost:" + config.Port
+	addr := config.Addr()
 
 	fmt.Printf("Server listening on %s (public URL %s)\n", addr, config.BaseURL)
 

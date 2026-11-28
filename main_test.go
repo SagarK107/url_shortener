@@ -13,6 +13,10 @@ import (
 	"testing"
 )
 
+// testBaseURL is deliberately different from any real default, so tests
+// fail if a handler ignores the injected base URL and uses a hard-coded one.
+const testBaseURL = "https://sho.rt"
+
 // urlOfLength returns prefix followed by a path of 'a's, so the whole
 // string is exactly n characters long. Used to test the length limit
 // at and around its boundary.
@@ -144,7 +148,7 @@ func TestGenerateShortURL(t *testing.T) {
 func TestHealth(t *testing.T) {
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
-	srv := NewServer(NewMemoryStore())
+	srv := NewServer(NewMemoryStore(), testBaseURL)
 	srv.newMux().ServeHTTP(w, req)
 	res := w.Result()
 	defer res.Body.Close()
@@ -183,22 +187,21 @@ func TestShorten(t *testing.T) {
 		{"http not upgraded", "http://go.dev", "http://go.dev"},
 		{"path and query kept", "https://go.dev/doc?x=1", "https://go.dev/doc?x=1"},
 	}
-	config := NewConfig()
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// New server: "go.dev" and "https://go.dev" normalize to the
 			// same URL, so without this the second row would get 200, not 201.
 			store := NewMemoryStore()
-			srv := NewServer(store)
+			srv := NewServer(store, testBaseURL)
 
 			status, got := postShorten(t, test.input, srv)
 
 			if status != http.StatusCreated {
 				t.Errorf("POST %q: got status %d, want %d", test.input, status, http.StatusCreated)
 			}
-			if !strings.HasPrefix(got.ShortURL, config.BaseURL+"/") {
-				t.Errorf("POST %q: short_url %q does not start with %q", test.input, got.ShortURL, config.BaseURL+"/")
+			if !strings.HasPrefix(got.ShortURL, testBaseURL+"/") {
+				t.Errorf("POST %q: short_url %q does not start with %q", test.input, got.ShortURL, testBaseURL+"/")
 			}
 			if got.OriginalURL != test.wantOriginal {
 				t.Errorf("POST %q: original_url %q, want %q", test.input, got.OriginalURL, test.wantOriginal)
@@ -240,7 +243,7 @@ func postShorten(t *testing.T, rawURL string, srv *Server) (int, shortenBody) {
 // time (created), 200 the second (already existed), same short_url both times.
 func TestShortenSameURLTwice(t *testing.T) {
 	store := NewMemoryStore()
-	srv := NewServer(store)
+	srv := NewServer(store, testBaseURL)
 	firstStatus, first := postShorten(t, "go.dev", srv)
 	secondStatus, second := postShorten(t, "go.dev", srv)
 
@@ -259,7 +262,7 @@ func TestShortenSameURLTwice(t *testing.T) {
 // the redirect would send one of them to the wrong site.
 func TestShortenDifferentURLs(t *testing.T) {
 	store := NewMemoryStore()
-	srv := NewServer(store)
+	srv := NewServer(store, testBaseURL)
 
 	statusA, a := postShorten(t, "go.dev", srv)
 	statusB, b := postShorten(t, "example.com", srv)
@@ -305,7 +308,7 @@ func TestShortenRejectsBadInput(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := NewMemoryStore()
-			srv := NewServer(store)
+			srv := NewServer(store, testBaseURL)
 
 			req := httptest.NewRequest(test.method, "/shorten", strings.NewReader(test.body))
 			w := httptest.NewRecorder()
@@ -334,17 +337,16 @@ func getRedirect(method, code string, srv *Server) *httptest.ResponseRecorder {
 // codeFrom removes the base URL from a short URL, leaving only the code.
 func codeFrom(t *testing.T, shortURL string) string {
 	t.Helper()
-	config := NewConfig()
-	code, ok := strings.CutPrefix(shortURL, config.BaseURL+"/")
+	code, ok := strings.CutPrefix(shortURL, testBaseURL+"/")
 	if !ok || code == "" {
-		t.Fatalf("short URL %q has no code after %q", shortURL, config.BaseURL+"/")
+		t.Fatalf("short URL %q has no code after %q", shortURL, testBaseURL+"/")
 	}
 	return code
 }
 
 func TestRedirect(t *testing.T) {
 	store := NewMemoryStore()
-	srv := NewServer(store)
+	srv := NewServer(store, testBaseURL)
 	_, created := postShorten(t, "https://go.dev/doc", srv)
 	knownCode := codeFrom(t, created.ShortURL)
 
@@ -377,7 +379,7 @@ func TestRedirect(t *testing.T) {
 // The whole product in one test: shorten a URL, then follow its code.
 func TestShortenThenRedirect(t *testing.T) {
 	store := NewMemoryStore()
-	srv := NewServer(store)
+	srv := NewServer(store, testBaseURL)
 
 	_, created := postShorten(t, "go.dev/learn", srv)
 	w := getRedirect(http.MethodGet, codeFrom(t, created.ShortURL), srv)
@@ -424,7 +426,7 @@ func postConcurrently(t *testing.T, inputs []string, srv *Server) ([]int, []shor
 // This is the check-then-act race the single write lock prevents.
 func TestConcurrentSameURL(t *testing.T) {
 	store := NewMemoryStore()
-	srv := NewServer(store)
+	srv := NewServer(store, testBaseURL)
 
 	inputs := make([]string, 50)
 	for i := range inputs {
@@ -454,7 +456,7 @@ func TestConcurrentSameURL(t *testing.T) {
 // 50 simultaneous requests for different URLs must each get a working code.
 func TestConcurrentDifferentURLs(t *testing.T) {
 	store := NewMemoryStore()
-	srv := NewServer(store)
+	srv := NewServer(store, testBaseURL)
 
 	inputs := make([]string, 50)
 	for i := range inputs {
@@ -487,7 +489,7 @@ func TestHandlerServer(t *testing.T) {
 		return "aaaaaaa", nil
 	}
 
-	srv := NewServer(store)
+	srv := NewServer(store, testBaseURL)
 
 	status, _ := postShorten(t, "www.google.com", srv)
 
